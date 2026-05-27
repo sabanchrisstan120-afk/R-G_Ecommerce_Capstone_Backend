@@ -1,6 +1,8 @@
 const express = require('express');
 const { param, body, query } = require('express-validator');
 const router = express.Router();
+const { adminOnly } = require('../middleware/admin');
+const { getAllOrders } = require('../controllers/order.controller');
 
 const {
   getSummary,
@@ -81,3 +83,7 @@ router.patch('/users/:id/toggle-status', [
 ], toggleUserStatus);
 
 module.exports = router;
+
+
+// GET /api/orders/admin - Admin only
+router.get('/admin', authenticate, adminOnly, getAllOrders);

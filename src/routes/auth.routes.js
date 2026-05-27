@@ -1,6 +1,8 @@
 const express = require('express');
 const { body } = require('express-validator');
 const router = express.Router();
+const { adminOnly } = require('../middleware/admin');
+const { getAllOrders } = require('../controllers/order.controller');
 
 const {
   register, login, refreshToken, logout,
@@ -58,3 +60,5 @@ router.put('/change-password', authenticate, [
 ], changePassword);
 
 module.exports = router;
+// GET /api/orders/admin - Admin only
+router.get('/admin', authenticate, adminOnly, getAllOrders);

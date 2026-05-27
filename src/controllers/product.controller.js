@@ -35,50 +35,108 @@ const getProducts = async (req, res) => {
       `, [...params, parseInt(limit), offset]),
       query(`SELECT COUNT(*) AS total FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE ${where}`, params),
     ]);
+     
+    productsResult.rows.forEach(product => {
+      product.image_urls = product.image_urls
+       ? JSON.parse(product.image_urls)
+     : [];
+        });
 
-    return success(res, {
-      products:   productsResult.rows,
-      pagination: { page: parseInt(page), limit: parseInt(limit), total: parseInt(countResult.rows[0].total) },
-    });
-  } catch (err) {
-    console.error('getProducts error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to load products' });
-  }
+     return success(res, {
+       products: productsResult.rows,
+       pagination: {
+       page: parseInt(page),
+       limit: parseInt(limit),
+       total: parseInt(countResult.rows[0].total)
+        },
+        });
+
+
+        } catch (err) {
+  console.error('getProducts error:', err);
+
+  return res.status(500).json({
+    success: false,
+    message: 'Failed to load products'
+  });
+}
+
 };
 
+
+
+
+ 
+
+// ─── Get Single Product ───────────────────────────────────────────────────────
 // ─── Get Single Product ───────────────────────────────────────────────────────
 const getProduct = async (req, res) => {
   try {
     const { id } = req.params;
+
     const { rows } = await query(`
       SELECT p.*, c.name AS category, c.slug AS category_slug
-      FROM products p LEFT JOIN categories c ON c.id = p.category_id
+      FROM products p
+      LEFT JOIN categories c ON c.id = p.category_id
       WHERE p.id = ? AND p.is_active = 1
     `, [id]);
-    if (!rows.length) return notFound(res, 'Product not found');
-    return success(res, { product: rows[0] });
+
+    if (!rows.length) {
+      return notFound(res, 'Product not found');
+    }
+
+    const product = rows[0];
+
+    // Convert JSON string to array
+    product.image_urls = product.image_urls
+      ? JSON.parse(product.image_urls)
+      : [];
+
+    return success(res, { product });
+
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Failed to load product' });
+    console.error('getProduct error:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to load product'
+    });
   }
 };
-
 // ─── Create Product (admin) ───────────────────────────────────────────────────
 const createProduct = async (req, res) => {
   try {
+    
     const { category_id, name, model_number, brand, description,
-            horsepower, cooling_capacity_btu, energy_rating,
-            price, stock_qty, image_url } = req.body;
+        horsepower, cooling_capacity_btu, energy_rating,
+        price, stock_qty, image_url, image_urls } = req.body;
 
     const existing = await query('SELECT id FROM products WHERE model_number = ?', [model_number]);
     if (existing.rows.length) return conflict(res, 'Model number already exists');
 
     const id = crypto.randomUUID();
     await query(`
-      INSERT INTO products (id, category_id, name, model_number, brand, description, horsepower, cooling_capacity_btu, energy_rating, price, stock_qty, image_url)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, category_id || null, name, model_number, brand, description || null,
-        horsepower || null, cooling_capacity_btu || null, energy_rating || null,
-        price, stock_qty || 0, image_url || null]);
+      INSERT INTO products (
+  id, category_id, name, model_number, brand,
+  description, horsepower, cooling_capacity_btu,
+  energy_rating, price, stock_qty, image_url, image_urls
+)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+  id,
+  category_id || null,
+  name,
+  model_number,
+  brand,
+  description || null,
+  horsepower || null,
+  cooling_capacity_btu || null,
+  energy_rating || null,
+  price,
+  stock_qty || 0,
+  image_url || null,
+  image_urls ? JSON.stringify(image_urls) : null
+]);
 
     const { rows } = await query('SELECT * FROM products WHERE id = ?', [id]);
     return created(res, { product: rows[0] }, 'Product created');
@@ -94,14 +152,24 @@ const updateProduct = async (req, res) => {
     const { id } = req.params;
     const fields = ['category_id','name','model_number','brand','description',
                     'horsepower','cooling_capacity_btu','energy_rating',
-                    'price','stock_qty','image_url','is_active'];
+                    'price','stock_qty','image_url','image_urls','is_active'];
 
     const updates = [];
     const params  = [];
     fields.forEach(f => {
-      if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
-    });
+     if (req.body[f] !== undefined) {
 
+     updates.push(`${f} = ?`);
+
+     if (f === 'image_urls') {
+      params.push(JSON.stringify(req.body[f]));
+       } else {
+       params.push(req.body[f]);
+        }
+
+     }
+    });
+    
     if (!updates.length) return badRequest(res, 'No fields to update');
     params.push(id);
 
@@ -218,8 +286,13 @@ const updateCategory = async (req, res) => {
     const params = [];
     fields.forEach((f) => {
       if (req.body[f] !== undefined) {
-        updates.push(`${f} = ?`);
-        params.push(req.body[f]);
+       if (f === 'image_urls') {
+  updates.push(`${f} = ?`);
+  params.push(JSON.stringify(req.body[f]));
+} else {
+  updates.push(`${f} = ?`);
+  params.push(req.body[f]);
+}
       }
     });
 
@@ -281,7 +354,7 @@ const adminListProducts = async (req, res) => {
       query(`
         SELECT p.id, p.category_id, p.name, p.model_number, p.brand, p.description,
                p.horsepower, p.cooling_capacity_btu, p.energy_rating,
-               p.price, p.stock_qty, p.image_url, p.is_active,
+               p.price, p.stock_qty, p.image_url, p.image_urls, p.is_active,
                c.name AS category, c.slug AS category_slug
         FROM products p LEFT JOIN categories c ON c.id = p.category_id
         WHERE ${where}
@@ -290,6 +363,11 @@ const adminListProducts = async (req, res) => {
       `, [...params, lim, off]),
       query(`SELECT COUNT(*) AS total FROM products p WHERE ${where}`, params),
     ]);
+      productsResult.rows.forEach(product => {
+   product.image_urls = product.image_urls
+    ? JSON.parse(product.image_urls)
+    : [];
+       });
 
     return success(res, {
       products: productsResult.rows,
@@ -306,19 +384,91 @@ const adminListProducts = async (req, res) => {
 };
 
 // ─── Permanent Delete Product (admin) ────────────────────────────────────────
+// ─── Permanent Delete Product (admin) ────────────────────────────────────────
 const permanentDeleteProduct = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { rows } = await query('SELECT name FROM products WHERE id = ?', [id]);
-    if (!rows.length) return notFound(res, 'Product not found');
-    await query('DELETE FROM products WHERE id = ?', [id]);
-    return success(res, {}, `Product "${rows[0].name}" permanently deleted`);
-  } catch (err) {
-    console.error('permanentDeleteProduct error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to permanently delete product' });
-  }
-};
 
+  try {
+
+    const { id } = req.params;
+
+    const { rows } = await query(
+      'SELECT name FROM products WHERE id = ?',
+      [id]
+    );
+
+    if (!rows.length) {
+      return notFound(res, 'Product not found');
+    }
+
+    // DELETE RELATED ORDER ITEMS
+    await query(
+      'DELETE FROM order_items WHERE product_id = ?',
+      [id]
+    );
+
+    // DELETE PRODUCT
+    await query(
+      'DELETE FROM products WHERE id = ?',
+      [id]
+    );
+
+    return success(
+      res,
+      {},
+      `Product "${rows[0].name}" permanently deleted`
+    );
+
+  } catch (err) {
+
+    console.error('permanentDeleteProduct error:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to permanently delete product'
+    });
+
+  }
+
+};
+  // ─── Restore Product (admin) ────────────────────────────────────────────────
+const restoreProduct = async (req, res) => {
+
+  try {
+
+    const { id } = req.params;
+
+    const { rows } = await query(
+      'SELECT name FROM products WHERE id = ?',
+      [id]
+    );
+
+    if (!rows.length) {
+      return notFound(res, 'Product not found');
+    }
+
+    await query(
+      'UPDATE products SET is_active = 1 WHERE id = ?',
+      [id]
+    );
+
+    return success(
+      res,
+      {},
+      `Product "${rows[0].name}" restored`
+    );
+
+  } catch (err) {
+
+    console.error('restoreProduct error:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to restore product'
+    });
+
+  }
+
+};
 module.exports = {
   getProducts,
   getProduct,
@@ -334,4 +484,5 @@ module.exports = {
   updateCategory,
   deleteCategory,
   adminListProducts,
+  restoreProduct,
 };

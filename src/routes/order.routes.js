@@ -1,9 +1,10 @@
+const { adminOnly } = require('../middleware/admin');
 const express = require('express');
 const { body, param, query } = require('express-validator');
 const router = express.Router();
 
 const {
-  placeOrder, getMyOrders, getOrder, cancelOrder,
+  placeOrder, getMyOrders, getAllOrders, getOrder, cancelOrder,
   recordPayment, getAddresses, addAddress, deleteAddress,
 } = require('../controllers/order.controller');
 const { authenticate } = require('../middleware/auth');
@@ -14,10 +15,8 @@ router.use(authenticate);
 
 // ─── Addresses ────────────────────────────────────────────────────────────────
 
-// GET /api/orders/addresses
 router.get('/addresses', getAddresses);
 
-// POST /api/orders/addresses
 router.post('/addresses', [
   body('street').trim().notEmpty().withMessage('Street address required'),
   body('city').trim().notEmpty().withMessage('City required'),
@@ -28,15 +27,23 @@ router.post('/addresses', [
   validate,
 ], addAddress);
 
-// DELETE /api/orders/addresses/:id
 router.delete('/addresses/:id', [
   param('id').isUUID(),
   validate,
 ], deleteAddress);
 
+// ─── Admin ────────────────────────────────────────────────────────────────────
+
+// IMPORTANT: /admin must be before /:id
+router.get('/admin', adminOnly, [
+  query('status').optional().isIn(['pending','confirmed','processing','shipped','delivered','cancelled','refunded']),
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1, max: 50 }),
+  validate,
+], getAllOrders);
+
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
-// POST /api/orders
 router.post('/', [
   body('items').isArray({ min: 1 }).withMessage('At least one item required'),
   body('items.*.product_id').isUUID().withMessage('Valid product_id required for each item'),
@@ -47,7 +54,6 @@ router.post('/', [
   validate,
 ], placeOrder);
 
-// GET /api/orders  (my orders)
 router.get('/', [
   query('status').optional().isIn(['pending','confirmed','processing','shipped','delivered','cancelled','refunded']),
   query('page').optional().isInt({ min: 1 }),
@@ -55,19 +61,16 @@ router.get('/', [
   validate,
 ], getMyOrders);
 
-// GET /api/orders/:id
 router.get('/:id', [
   param('id').isUUID(),
   validate,
 ], getOrder);
 
-// POST /api/orders/:id/cancel
 router.post('/:id/cancel', [
   param('id').isUUID(),
   validate,
 ], cancelOrder);
 
-// POST /api/orders/:id/pay
 router.post('/:id/pay', [
   param('id').isUUID(),
   body('payment_method').isIn(['gcash','bank_transfer','credit_card','cash_on_delivery','maya'])
@@ -76,4 +79,5 @@ router.post('/:id/pay', [
   validate,
 ], recordPayment);
 
+// THIS MUST BE THE ONLY module.exports AT THE BOTTOM
 module.exports = router;

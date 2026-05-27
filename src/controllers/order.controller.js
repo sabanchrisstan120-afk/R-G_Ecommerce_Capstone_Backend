@@ -1,6 +1,7 @@
 const { query, getClient } = require('../config/database');
 const { success, created, notFound, badRequest, forbidden } = require('../utils/response');
 
+
 const generateOrderNumber = () => {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const rand = Math.floor(Math.random() * 90000) + 10000;
@@ -101,33 +102,145 @@ const placeOrder = async (req, res) => {
 };
 
 // ─── Get My Orders ────────────────────────────────────────────────────────────
+// ─── Get My Orders ────────────────────────────────────────────────────────────
 const getMyOrders = async (req, res) => {
   try {
+
     const { status, page = 1, limit = 10 } = req.query;
+
     const offset = (parseInt(page) - 1) * parseInt(limit);
+
     const conditions = ['o.user_id = ?'];
+
     const params = [req.user.id];
 
-    if (status) { conditions.push('o.status = ?'); params.push(status); }
+    if (status) {
+      conditions.push('o.status = ?');
+      params.push(status);
+    }
+
     const where = conditions.join(' AND ');
 
     const [ordersResult, countResult] = await Promise.all([
+
       query(`
-        SELECT o.id, o.order_number, o.status, o.payment_status, o.payment_method,
-               o.subtotal, o.shipping_fee, o.total_amount, o.ordered_at, o.delivered_at
-        FROM orders o WHERE ${where}
+        SELECT
+          o.id,
+          o.order_number,
+          o.status,
+          o.payment_status,
+          o.payment_method,
+          o.subtotal,
+          o.shipping_fee,
+          o.total_amount,
+          o.ordered_at,
+          o.delivered_at
+        FROM orders o
+        WHERE ${where}
         ORDER BY o.ordered_at DESC
         LIMIT ? OFFSET ?
       `, [...params, parseInt(limit), offset]),
-      query(`SELECT COUNT(*) AS total FROM orders o WHERE ${where}`, params),
+
+      query(`
+        SELECT COUNT(*) AS total
+        FROM orders o
+        WHERE ${where}
+      `, params),
+
+    ]);
+
+    // ADD ORDER ITEMS
+    const orders = ordersResult.rows;
+
+    for (const order of orders) {
+
+      const itemsResult = await query(`
+        SELECT
+          oi.*,
+          p.name,
+          p.image_url
+        FROM order_items oi
+        LEFT JOIN products p
+          ON p.id = oi.product_id
+        WHERE oi.order_id = ?
+      `, [order.id]);
+
+      order.items = itemsResult.rows;
+    }
+     for (const order of ordersResult.rows) {
+
+  const itemsResult = await query(
+    `SELECT product_id FROM order_items WHERE order_id = ?`,
+    [order.id]
+  );
+
+  order.items = itemsResult.rows;
+}
+    return success(res, {
+      orders,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(countResult.rows[0].total),
+      },
+    });
+
+  } catch (err) {
+
+    console.error(err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to load orders'
+    });
+  }
+};
+
+// ─── Admin: Get All Orders ─────────────────────────────────────
+const getAllOrders = async (req, res) => {
+  try {
+    const { status, page = 1, limit = 10 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    let where = '';
+    const params = [];
+
+    if (status) {
+      where = 'WHERE o.status = ?';
+      params.push(status);
+    }
+
+    const [ordersResult, countResult] = await Promise.all([
+      query(`
+        SELECT o.id, o.order_number, o.status, o.payment_status,
+               o.total_amount, o.ordered_at,
+               CONCAT(u.first_name, ' ', u.last_name) AS customer_name, u.email
+        FROM orders o
+        JOIN users u ON u.id = o.user_id
+        ${where}
+        ORDER BY o.ordered_at DESC
+        LIMIT ? OFFSET ?
+      `, [...params, parseInt(limit), offset]),
+
+      query(`
+        SELECT COUNT(*) AS total
+        FROM orders o
+        ${where}
+      `, params),
     ]);
 
     return success(res, {
-      orders:     ordersResult.rows,
-      pagination: { page: parseInt(page), limit: parseInt(limit), total: parseInt(countResult.rows[0].total) },
+      orders: ordersResult.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(countResult.rows[0].total),
+      },
     });
+
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Failed to load orders' });
+    console.error(err);
+    return res.status(500).json({ success:false, message:'Failed to load orders' });
   }
 };
 
@@ -253,6 +366,13 @@ const deleteAddress = async (req, res) => {
 };
 
 module.exports = {
-  placeOrder, getMyOrders, getOrder, cancelOrder,
-  recordPayment, getAddresses, addAddress, deleteAddress,
+  placeOrder,
+  getMyOrders,
+  getAllOrders,
+  getOrder,
+  cancelOrder,
+  recordPayment,
+  getAddresses,
+  addAddress,
+  deleteAddress,
 };

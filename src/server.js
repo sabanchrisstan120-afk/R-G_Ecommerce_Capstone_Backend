@@ -72,7 +72,9 @@ app.get('/health', (req, res) => {
 app.use('/api/auth',     authLimiter, authRoutes);
 app.use('/api/admin',    adminRoutes);
 app.use('/api/products', productRoutes);
+const reviewRoutes = require('./routes/review.routes');
 app.use('/api/orders',   orderRoutes);
+app.use('/api/reviews', reviewRoutes);
 
 // ─── 404 Handler ─────────────────────────────────────────────────────────────
 app.use((req, res) => {

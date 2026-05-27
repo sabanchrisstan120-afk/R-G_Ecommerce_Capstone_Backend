@@ -293,6 +293,7 @@ const getOrders = async (req, res) => {
       query(`
         SELECT o.id, o.order_number, o.status, o.payment_status, o.payment_method,
                o.subtotal, o.total_amount, o.ordered_at,
+               o.street, o.city, o.province, o.zip,
                u.first_name, u.last_name, u.email
         FROM orders o JOIN users u ON u.id = o.user_id
         WHERE ${where}

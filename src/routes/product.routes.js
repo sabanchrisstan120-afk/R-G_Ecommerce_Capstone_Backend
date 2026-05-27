@@ -1,10 +1,9 @@
 const express = require('express');
-const { body, param, query } = require('express-validator');
+const { param, body, query } = require('express-validator');
 const router = express.Router();
 
 const {
-  getProducts, getProduct, createProduct, updateProduct,
-  deleteProduct, permanentDeleteProduct, adjustStock, getLowStock, getCategories, adminListProducts,
+  getProducts,getProduct,createProduct,updateProduct,deleteProduct,permanentDeleteProduct,adjustStock,restoreProduct, getLowStock, getCategories, adminListProducts,
   adminListCategories, createCategory, updateCategory, deleteCategory,
 } = require('../controllers/product.controller');
 const { authenticate, authorize } = require('../middleware/auth');
@@ -12,27 +11,21 @@ const { validate } = require('../middleware/validate');
 
 // ─── Public Routes ────────────────────────────────────────────────────────────
 
-// GET /api/products?category=split-type&brand=Daikin&search=inverter&page=1&limit=20
+// GET /api/products
 router.get('/', getProducts);
 
 // GET /api/products/categories
 router.get('/categories', getCategories);
 
-// GET /api/products/:id
-router.get('/:id', [
-  param('id').isUUID().withMessage('Invalid product ID'),
-  validate,
-], getProduct);
-
 // ─── Admin Routes ─────────────────────────────────────────────────────────────
 
-// GET /api/products/admin/low-stock?threshold=5
+// GET /api/products/admin/low-stock
 router.get('/admin/low-stock', authenticate, authorize('admin', 'superadmin'), [
   query('threshold').optional().isInt({ min: 0 }),
   validate,
 ], getLowStock);
 
-// GET /api/products/admin/list?search=&page=1&limit=15
+// GET /api/products/admin/list
 router.get('/admin/list', authenticate, authorize('admin', 'superadmin'), [
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 100 }),
@@ -81,6 +74,12 @@ router.post('/', authenticate, authorize('admin', 'superadmin'), [
   validate,
 ], createProduct);
 
+// GET /api/products/:id  ← must be after all /admin/* routes
+router.get('/:id', [
+  param('id').isUUID().withMessage('Invalid product ID'),
+  validate,
+], getProduct);
+
 // PUT /api/products/:id
 router.put('/:id', authenticate, authorize('admin', 'superadmin'), [
   param('id').isUUID(),
@@ -89,13 +88,13 @@ router.put('/:id', authenticate, authorize('admin', 'superadmin'), [
   validate,
 ], updateProduct);
 
-// DELETE /api/products/:id  (soft delete)
+// DELETE /api/products/:id (soft delete)
 router.delete('/:id', authenticate, authorize('admin', 'superadmin'), [
   param('id').isUUID(),
   validate,
 ], deleteProduct);
 
-// DELETE /api/products/:id/permanent  (hard delete)
+// DELETE /api/products/:id/permanent (hard delete)
 router.delete('/:id/permanent', authenticate, authorize('admin', 'superadmin'), [
   param('id').isUUID(),
   validate,
@@ -108,5 +107,12 @@ router.patch('/:id/stock', authenticate, authorize('admin', 'superadmin'), [
   body('reason').optional().isString(),
   validate,
 ], adjustStock);
+
+
+// PUT /api/products/:id/restore
+router.put('/:id/restore', authenticate, authorize('admin', 'superadmin'), [
+  param('id').isUUID(),
+  validate,
+], restoreProduct);
 
 module.exports = router;
