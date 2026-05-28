@@ -1,58 +1,103 @@
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
-const mysql  = require('mysql2/promise');
+const mysql = require('mysql2/promise');
 
 async function seed() {
   const conn = await mysql.createConnection({
-    host:     process.env.DB_HOST     || 'localhost',
-    port:     parseInt(process.env.DB_PORT) || 3306,
-    database: process.env.DB_NAME     || 'rg_trading',
-    user:     process.env.DB_USER     || 'root',
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT) || 3306,
+    database: process.env.DB_NAME || 'rg_trading',
+    user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
   });
 
-  console.log('🌱 Seeding R&G Trading database...\n');
+  console.log('🌱 Seeding admin + products...\n');
+
   try {
-    // Admin
+    // =========================
+    // ADMIN USER ONLY
+    // =========================
     const adminHash = await bcrypt.hash('Admin@123456', 12);
+
     await conn.query(
-      `INSERT IGNORE INTO users (id, email, password_hash, first_name, last_name, role)
+      `INSERT IGNORE INTO users
+       (id, email, password_hash, first_name, last_name, role)
        VALUES (UUID(), ?, ?, 'Admin', 'RG', 'admin')`,
       ['admin@rgtrading.com', adminHash]
     );
-    console.log('✅ Admin: admin@rgtrading.com / Admin@123456');
 
-    // Customer
-    const custHash = await bcrypt.hash('Customer@123', 12);
-    await conn.query(
-      `INSERT IGNORE INTO users (id, email, password_hash, first_name, last_name, phone, role)
-       VALUES (UUID(), ?, ?, 'Juan', 'dela Cruz', '09171234567', 'customer')`,
-      ['juan@example.com', custHash]
-    );
-    console.log('✅ Customer: juan@example.com / Customer@123');
+    console.log('✅ Admin user seeded');
 
-    // Products
-    const products = [
-      [1, 'Carrier Optima Window Type 0.5HP', 'WCARZ006EE', 'Carrier',  0.5, 5000,  '2.5 Star', 9500,  30],
-      [1, 'Carrier Optima Window Type 1.0HP', 'WCARZ010EC', 'Carrier',  1.0, 9000,  '3 Star',   13500, 25],
-      [2, 'Daikin Inverter Split 1.0HP',      'FTKC25UV',   'Daikin',   1.0, 9000,  '5 Star',   35000, 15],
-      [2, 'Daikin Inverter Split 1.5HP',      'FTKC35UV',   'Daikin',   1.5, 12000, '5 Star',   42000, 12],
-      [2, 'Midea MSplit 1.0HP Inverter',      'MSAG-09NXD', 'Midea',    1.0, 9000,  '4 Star',   28000, 20],
-      [2, 'Midea MSplit 1.5HP Inverter',      'MSAG-12NXD', 'Midea',    1.5, 12000, '4 Star',   33000, 18],
-      [3, 'LG Portable 1.0HP',                'LP1019WSR',  'LG',       1.0, 10000, '3 Star',   22000, 10],
-      [2, 'Samsung Wind-Free 2.0HP',          'AR18TXFCAWK','Samsung',  2.0, 18000, '5 Star',   55000, 8 ],
+    // =========================
+    // PRODUCTS (100 total)
+    // =========================
+    const categories = [1, 2, 3];
+
+    const brands = [
+      'Carrier',
+      'Daikin',
+      'Midea',
+      'LG',
+      'Samsung',
+      'Panasonic'
     ];
+
+    const hpOptions = [0.5, 1.0, 1.5, 2.0, 2.5];
+
+    const ratings = ['2 Star', '3 Star', '4 Star', '5 Star'];
+
+    const types = [
+      'Window Type',
+      'Split Type',
+      'Cassette Type',
+      'Floor Standing'
+    ];
+
+    const products = [];
+
+    for (let i = 1; i <= 100; i++) {
+      const brand = brands[i % brands.length];
+      const hp = hpOptions[i % hpOptions.length];
+      const category = categories[i % categories.length];
+      const rating = ratings[i % ratings.length];
+      const type = types[i % types.length];
+
+      const btu =
+        hp === 0.5 ? 5000 :
+        hp === 1.0 ? 9000 :
+        hp === 1.5 ? 12000 :
+        hp === 2.0 ? 18000 :
+        22000;
+
+      const price = 8000 + (hp * 10000) + (i * 150);
+
+      const stock = 10 + (i % 25);
+
+      products.push([
+        category,
+        `${brand} ${type} Model ${i} ${hp}HP`,
+        `MODEL-${brand.substring(0, 3).toUpperCase()}-${i}`,
+        brand,
+        hp,
+        btu,
+        rating,
+        Math.floor(price),
+        stock
+      ]);
+    }
 
     for (const p of products) {
       await conn.query(
         `INSERT IGNORE INTO products
-           (id, category_id, name, model_number, brand, horsepower, cooling_capacity_btu, energy_rating, price, stock_qty)
+         (id, category_id, name, model_number, brand, horsepower, cooling_capacity_btu, energy_rating, price, stock_qty)
          VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         p
       );
     }
-    console.log('✅ 8 aircon products seeded');
+
+    console.log('✅ 100 products seeded');
     console.log('\n🎉 Seed complete!\n');
+
   } catch (err) {
     console.error('❌ Seed error:', err.message);
     process.exit(1);

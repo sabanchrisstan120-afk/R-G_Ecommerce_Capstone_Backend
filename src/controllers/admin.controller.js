@@ -291,14 +291,22 @@ const getOrders = async (req, res) => {
 
     const [ordersResult, countResult] = await Promise.all([
       query(`
-        SELECT o.id, o.order_number, o.status, o.payment_status, o.payment_method,
-               o.subtotal, o.total_amount, o.ordered_at,
-               o.street, o.city, o.province, o.zip,
-               u.first_name, u.last_name, u.email
-        FROM orders o JOIN users u ON u.id = o.user_id
-        WHERE ${where}
-        ORDER BY o.ordered_at DESC
-        LIMIT ? OFFSET ?
+       SELECT o.id, o.order_number, o.status, o.payment_status, o.payment_method,
+       o.subtotal, o.shipping_fee, o.discount_amount, o.total_amount,
+       o.ordered_at, o.notes,
+       u.first_name, u.last_name, u.email,
+       a.street, a.city, a.province, a.zip
+FROM orders o
+JOIN users u ON u.id = o.user_id
+LEFT JOIN addresses a ON a.id = o.address_id
+WHERE 1=1
+ORDER BY o.ordered_at DESC
+LIMIT ? OFFSET ?
+
+
+
+
+        
       `, [...params, parseInt(limit), offset]),
       query(`SELECT COUNT(*) AS total FROM orders o JOIN users u ON u.id = o.user_id WHERE ${where}`, params),
     ]);
@@ -393,3 +401,6 @@ module.exports = {
   getPeakPeriods, getCustomerPreferences, getRepeatCustomers,
   getOrders, updateOrderStatus, getUsers, toggleUserStatus,
 };
+
+
+
