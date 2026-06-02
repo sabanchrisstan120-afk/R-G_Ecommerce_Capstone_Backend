@@ -1,5 +1,9 @@
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { query } = require('../config/database');
-const { success, notFound, badRequest } = require('../utils/response');
+const { success, created, notFound, badRequest, conflict } = require('../utils/response');
+
+const SALT_ROUNDS = 12;
 
 // ─── Dashboard Summary ────────────────────────────────────────────────────────
 const getSummary = async (req, res) => {
@@ -65,6 +69,36 @@ const getSummary = async (req, res) => {
   } catch (err) {
     console.error('getSummary error:', err);
     return res.status(500).json({ success: false, message: 'Failed to load summary' });
+  }
+};
+
+// ─── Create Rider Account ───────────────────────────────────────────────────
+const createRider = async (req, res) => {
+  try {
+    const { email, password, first_name, last_name, phone } = req.body;
+    const existing = await query('SELECT id FROM users WHERE email = ?', [email.toLowerCase()]);
+    if (existing.rows.length) return conflict(res, 'Email is already registered');
+
+    const id = crypto.randomUUID();
+    const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
+
+    await query(
+      `INSERT INTO users (id, email, password_hash, first_name, last_name, phone, role)
+       VALUES (?, ?, ?, ?, ?, ?, 'rider')`,
+      [id, email.toLowerCase(), password_hash, first_name, last_name, phone || null]
+    );
+
+    await query(
+      `INSERT INTO riders (id, first_name, last_name, email, phone)
+       VALUES (?, ?, ?, ?, ?)`,
+      [id, first_name, last_name, email.toLowerCase(), phone || null]
+    );
+
+    const { rows } = await query('SELECT id, email, first_name, last_name, role, is_active, created_at FROM users WHERE id = ?', [id]);
+    return created(res, { user: rows[0] }, 'Rider account created successfully');
+  } catch (err) {
+    console.error('createRider error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to create rider account' });
   }
 };
 
@@ -293,13 +327,17 @@ const getOrders = async (req, res) => {
       query(`
        SELECT o.id, o.order_number, o.status, o.payment_status, o.payment_method,
        o.subtotal, o.shipping_fee, o.discount_amount, o.total_amount,
-       o.ordered_at, o.notes,
-       u.first_name, u.last_name, u.email,
-       a.street, a.city, a.province, a.zip
+       o.ordered_at, o.notes, od.expected_delivery_date, od.rider_id, od.delivery_status,
+       od.delivery_issue_type, od.delivery_note, od.delivery_proof_url,
+       u.first_name, u.last_name, u.email, u.phone,
+       r.first_name AS rider_first_name, r.last_name AS rider_last_name,
+       a.street, a.city, a.province, a.zip_code
 FROM orders o
 JOIN users u ON u.id = o.user_id
+LEFT JOIN order_deliveries od ON od.order_id = o.id
+LEFT JOIN riders r ON r.id = od.rider_id
 LEFT JOIN addresses a ON a.id = o.address_id
-WHERE 1=1
+WHERE ${where}
 ORDER BY o.ordered_at DESC
 LIMIT ? OFFSET ?
 
@@ -321,22 +359,101 @@ LIMIT ? OFFSET ?
   }
 };
 
+const getRiderActivity = async (req, res) => {
+  try {
+    const { rider_id, order_id, page = 1, limit = 50 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const conditions = ['ca.event_type = ?'];
+    const params = ['rider_delivery_update'];
+
+    if (rider_id) {
+      conditions.push('ca.user_id = ?');
+      params.push(rider_id);
+    }
+
+    if (order_id) {
+      conditions.push("JSON_UNQUOTE(JSON_EXTRACT(ca.metadata, '$.order_id')) = ?");
+      params.push(order_id);
+    }
+
+    const where = conditions.join(' AND ');
+    const [activityResult, countResult] = await Promise.all([
+      query(`
+        SELECT ca.id, ca.user_id, ca.event_type, ca.metadata, ca.ip_address, ca.created_at,
+               u.first_name, u.last_name, u.email
+        FROM customer_activity ca
+        LEFT JOIN users u ON u.id = ca.user_id
+        WHERE ${where}
+        ORDER BY ca.created_at DESC
+        LIMIT ? OFFSET ?
+      `, [...params, parseInt(limit), offset]),
+      query(`SELECT COUNT(*) AS total FROM customer_activity ca WHERE ${where}`, params),
+    ]);
+
+    return success(res, {
+      activity: activityResult.rows,
+      pagination: { page: parseInt(page), limit: parseInt(limit), total: parseInt(countResult.rows[0].total) },
+    });
+  } catch (err) {
+    console.error('getRiderActivity error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to load rider activity' });
+  }
+};
+
 // ─── Update Order Status ──────────────────────────────────────────────────────
 const updateOrderStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, payment_status } = req.body;
-    const updates = [];
-    const params  = [];
+    const { status, payment_status, expected_delivery_date, rider_id, delivery_status, delivery_issue_type, delivery_note, delivery_proof_url } = req.body;
+    const orderUpdates = [];
+    const orderParams  = [];
+    const deliveryUpdates = [];
+    const deliveryParams  = [];
 
-    if (status)         { updates.push('status = ?');         params.push(status); }
-    if (payment_status) { updates.push('payment_status = ?'); params.push(payment_status); }
-    if (status === 'delivered') updates.push('delivered_at = NOW()');
-    if (status === 'confirmed') updates.push('confirmed_at = NOW()');
-    params.push(id);
+    if (status)                 { orderUpdates.push('status = ?');                 orderParams.push(status); }
+    if (payment_status)         { orderUpdates.push('payment_status = ?');         orderParams.push(payment_status); }
+    if (status === 'delivered') orderUpdates.push('delivered_at = NOW()');
+    if (status === 'confirmed') orderUpdates.push('confirmed_at = NOW()');
 
-    await query(`UPDATE orders SET ${updates.join(', ')} WHERE id = ?`, params);
-    const { rows } = await query('SELECT * FROM orders WHERE id = ?', [id]);
+    if (expected_delivery_date !== undefined) { deliveryUpdates.push('expected_delivery_date = ?'); deliveryParams.push(expected_delivery_date); }
+    if (rider_id !== undefined)               { deliveryUpdates.push('rider_id = ?');               deliveryParams.push(rider_id); }
+    if (delivery_status !== undefined)        { deliveryUpdates.push('delivery_status = ?');        deliveryParams.push(delivery_status); }
+    if (delivery_issue_type !== undefined)    { deliveryUpdates.push('delivery_issue_type = ?');    deliveryParams.push(delivery_issue_type); }
+    if (delivery_note !== undefined)          { deliveryUpdates.push('delivery_note = ?');          deliveryParams.push(delivery_note); }
+    if (delivery_proof_url !== undefined)     { deliveryUpdates.push('delivery_proof_url = ?');     deliveryParams.push(delivery_proof_url); }
+
+    if (!orderUpdates.length && !deliveryUpdates.length) {
+      return badRequest(res, 'No update fields provided.');
+    }
+
+    if (orderUpdates.length) {
+      orderParams.push(id);
+      await query(`UPDATE orders SET ${orderUpdates.join(', ')} WHERE id = ?`, orderParams);
+    }
+
+    if (deliveryUpdates.length) {
+      const { rows: deliveryRows } = await query('SELECT id FROM order_deliveries WHERE order_id = ?', [id]);
+      if (!deliveryRows.length) {
+        await query(
+          `INSERT INTO order_deliveries (id, order_id, delivery_status, created_at, updated_at)
+           VALUES (UUID(), ?, 'pending', NOW(), NOW())`,
+          [id]
+        );
+      }
+      deliveryUpdates.push('updated_at = NOW()');
+      await query(`UPDATE order_deliveries SET ${deliveryUpdates.join(', ')} WHERE order_id = ?`, [...deliveryParams, id]);
+    }
+
+    const { rows } = await query(
+      `SELECT o.*, od.expected_delivery_date, od.delivery_status, od.delivery_issue_type,
+              od.delivery_note, od.delivery_proof_url, od.rider_id,
+              r.first_name AS rider_first_name, r.last_name AS rider_last_name
+       FROM orders o
+       LEFT JOIN order_deliveries od ON od.order_id = o.id
+       LEFT JOIN riders r ON r.id = od.rider_id
+       WHERE o.id = ?`,
+      [id]
+    );
     if (!rows.length) return notFound(res, 'Order not found');
     return success(res, { order: rows[0] }, 'Order updated');
   } catch (err) {
@@ -399,7 +516,7 @@ const toggleUserStatus = async (req, res) => {
 module.exports = {
   getSummary, getRevenueTrends, getTopProducts, getSeasonalDemand,
   getPeakPeriods, getCustomerPreferences, getRepeatCustomers,
-  getOrders, updateOrderStatus, getUsers, toggleUserStatus,
+  getOrders, createRider, updateOrderStatus, getUsers, toggleUserStatus,
 };
 
 

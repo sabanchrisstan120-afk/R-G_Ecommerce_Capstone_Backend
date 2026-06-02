@@ -13,6 +13,8 @@ const {
   getCustomerPreferences,
   getRepeatCustomers,
   getOrders,
+  getRiderActivity,
+  createRider,
   updateOrderStatus,
   getUsers,
   toggleUserStatus,
@@ -67,14 +69,39 @@ router.get('/orders', getOrders);
 // PATCH /api/admin/orders/:id/status
 router.patch('/orders/:id/status', [
   param('id').isUUID().withMessage('Invalid order ID'),
-  body('status').optional().isIn(['pending','confirmed','processing','shipped','delivered','cancelled','refunded']),
-  body('payment_status').optional().isIn(['pending','paid','failed','refunded']),
+  body('status').optional({ checkFalsy: true }).isIn(['pending','confirmed','processing','shipped','delivered','cancelled','refunded']),
+  body('payment_status').optional({ checkFalsy: true }).isIn(['pending','paid','failed','refunded']),
+  body('expected_delivery_date').optional({ checkFalsy: true }).isISO8601().withMessage('Expected delivery date must be a valid date'),
+  body('rider_id').optional({ checkFalsy: true }).isUUID().withMessage('Rider ID must be a valid UUID'),
+  body('delivery_status').optional({ checkFalsy: true }).isIn(['pending','out_for_delivery','delivered','cannot_find_customer','failed','damaged']),
+  body('delivery_issue_type').optional({ checkFalsy: true }).isString().isLength({ max: 64 }),
+  body('delivery_note').optional({ checkFalsy: true }).isString().isLength({ max: 500 }),
+  body('delivery_proof_url').optional({ checkFalsy: true }).isURL().withMessage('Proof URL must be a valid URL'),
   validate,
 ], updateOrderStatus);
+
+// GET /api/admin/rider-activity?rider_id=&order_id=&page=&limit=
+router.get('/rider-activity', [
+  query('rider_id').optional().isUUID().withMessage('Rider ID must be a valid UUID'),
+  query('order_id').optional().isUUID().withMessage('Order ID must be a valid UUID'),
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1, max: 100 }),
+  validate,
+], getRiderActivity);
 
 // ─── User Management ─────────────────────────────────────────────────────────
 // GET /api/admin/users?role=customer&page=1&limit=20
 router.get('/users', getUsers);
+
+// POST /api/admin/users
+router.post('/users', [
+  body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
+  body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+  body('first_name').trim().notEmpty().withMessage('First name required'),
+  body('last_name').trim().notEmpty().withMessage('Last name required'),
+  body('phone').optional({ checkFalsy: true }).isMobilePhone().withMessage('Invalid phone number'),
+  validate,
+], createRider);
 
 // PATCH /api/admin/users/:id/toggle-status
 router.patch('/users/:id/toggle-status', [
@@ -83,7 +110,3 @@ router.patch('/users/:id/toggle-status', [
 ], toggleUserStatus);
 
 module.exports = router;
-
-
-// GET /api/orders/admin - Admin only
-router.get('/admin', authenticate, adminOnly, getAllOrders);

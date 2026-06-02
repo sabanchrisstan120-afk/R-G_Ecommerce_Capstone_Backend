@@ -7,14 +7,14 @@ exports.createReview = async (req, res) => {
   try {
     const user_id = req.user.id;
 
-    const { product_id, rating, comment } = req.body;
+   const { product_id, rating, comment } = req.body;
 
-    if (!product_id || !rating || !comment) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required fields.'
-      });
-    }
+console.log('===== REVIEW DEBUG =====');
+console.log(req.body);
+console.log('product_id:', product_id);
+console.log('rating:', rating);
+console.log('comment:', comment);
+console.log('========================');
 
     // check product
    const productResult = await query(

@@ -135,11 +135,42 @@ const logout = async (req, res) => {
 // ─── Get Profile ──────────────────────────────────────────────────────────────
 const getProfile = async (req, res) => {
   try {
-    const { rows } = await query(
+    const { rows: userRows } = await query(
       'SELECT id, email, first_name, last_name, phone, role, email_verified, last_login_at, created_at FROM users WHERE id = ?',
       [req.user.id]
     );
-    return success(res, { user: rows[0] });
+
+    const { rows: addressRows } = await query(
+      `SELECT street, city, province, zip_code
+       FROM addresses
+       WHERE user_id = ?
+       ORDER BY is_default DESC, created_at DESC
+       LIMIT 1`,
+      [req.user.id]
+    );
+
+    const user = userRows[0] || {};
+    const defaultAddress = addressRows[0] || null;
+
+    return success(res, {
+      user: {
+        id: user.id,
+        email: user.email,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        phone: user.phone,
+        role: user.role,
+        email_verified: user.email_verified,
+        last_login_at: user.last_login_at,
+        created_at: user.created_at,
+        address: defaultAddress ? {
+          street: defaultAddress.street,
+          city: defaultAddress.city,
+          province: defaultAddress.province,
+          zip: defaultAddress.zip_code,
+        } : null,
+      },
+    });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Could not fetch profile' });
   }

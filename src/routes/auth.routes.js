@@ -59,6 +59,10 @@ router.put('/change-password', authenticate, [
   validate,
 ], changePassword);
 
-module.exports = router;
+// Additional compatibility route: /api/profile -> GET /api/auth/me
+router.get('/profile', authenticate, getProfile);
+
 // GET /api/orders/admin - Admin only
 router.get('/admin', authenticate, adminOnly, getAllOrders);
+
+module.exports = router;

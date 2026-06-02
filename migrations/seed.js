@@ -31,7 +31,7 @@ async function seed() {
     // =========================
     // PRODUCTS (100 total)
     // =========================
-    const categories = [1, 2, 3];
+    const categories = [1, 2, 3, 4, 5]; // Assuming these category IDs exist
 
     const brands = [
       'Carrier',
