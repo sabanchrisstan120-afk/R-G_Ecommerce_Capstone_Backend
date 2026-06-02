@@ -516,7 +516,7 @@ const toggleUserStatus = async (req, res) => {
 module.exports = {
   getSummary, getRevenueTrends, getTopProducts, getSeasonalDemand,
   getPeakPeriods, getCustomerPreferences, getRepeatCustomers,
-  getOrders, createRider, updateOrderStatus, getUsers, toggleUserStatus,
+  getOrders, getRiderActivity, createRider, updateOrderStatus, getUsers, toggleUserStatus,
 };
 
 

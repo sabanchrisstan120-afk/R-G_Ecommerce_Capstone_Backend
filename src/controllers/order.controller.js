@@ -3,7 +3,8 @@ const path = require('path');
 const { query, getClient } = require('../config/database');
 const { success, created, notFound, badRequest, forbidden } = require('../utils/response');
 
-const DELIVERY_UPLOAD_DIR = path.join(__dirname, '../uploads/delivery_proofs');
+// Save to project-root uploads directory so it matches Express static serving.
+const DELIVERY_UPLOAD_DIR = path.join(__dirname, '../../uploads/delivery_proofs');
 
 const generateOrderNumber = () => {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
