@@ -1,3 +1,14 @@
+// ─── Global Error Handlers ────────────────────────────────────────────────────
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  // Gracefully shutdown after logging
+  setTimeout(() => process.exit(1), 1000);
+});
+
 require('dotenv').config();
 const express  = require('express');
 const path     = require('path');
@@ -54,6 +65,13 @@ app.use(globalLimiter);
 // Delivery proof uploads are sent as base64 JSON, so allow larger payloads here.
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// ─── Request Timeout ──────────────────────────────────────────────────────────
+app.use((req, res, next) => {
+  req.setTimeout(30000); // 30 second timeout per request
+  res.setTimeout(30000);
+  next();
+});
 
 // ─── Uploads / public assets ───────────────────────────────────────────────────
 // Legacy fallback: some older proofs were saved under src/uploads.

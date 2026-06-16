@@ -35,8 +35,9 @@ const createOrderAddress = async (conn, userId, address, phone) => {
 
 // ─── Place Order ──────────────────────────────────────────────────────────────
 const placeOrder = async (req, res) => {
-  const conn = await getClient();
+  let conn;
   try {
+    conn = await getClient();
     const { items, address_id, address, payment_method, notes, phone } = req.body;
     if (!items || !items.length) return badRequest(res, 'Order must contain at least one item');
 
@@ -129,12 +130,18 @@ const placeOrder = async (req, res) => {
     await conn.query('COMMIT');
     return created(res, { order: { id: order_id, order_number, total_amount, items: orderLines } }, 'Order placed successfully');
   } catch (err) {
-    await conn.query('ROLLBACK');
+    if (conn) {
+      try {
+        await conn.query('ROLLBACK');
+      } catch (rollbackErr) {
+        console.error('placeOrder rollback failed:', rollbackErr);
+      }
+    }
     console.error('placeOrder error:', err);
     if (err.status) return res.status(err.status).json({ success: false, message: err.message });
     return res.status(500).json({ success: false, message: 'Failed to place order' });
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 };
 
@@ -161,10 +168,12 @@ const saveDeliveryProofImage = async (dataUrl) => {
 
 const logRiderActivity = async (conn, userId, metadata) => {
   try {
+    const metaStr = typeof metadata === 'undefined' || metadata === null
+      ? '{}' : JSON.stringify(metadata);
     await conn.query(
       `INSERT INTO customer_activity (id, user_id, event_type, metadata, created_at)
        VALUES (UUID(), ?, 'rider_delivery_update', ?, NOW())`,
-      [userId, JSON.stringify(metadata)]
+      [userId, metaStr]
     );
   } catch (err) {
     console.error('logRiderActivity error:', err);
@@ -230,19 +239,37 @@ const getAssignedOrders = async (req, res) => {
       `, params),
     ]);
 
-    const orders = ordersResult.rows;
-    for (const order of orders) {
-      const itemsResult = await query(`
-        SELECT
-          oi.*,
-          p.name,
-          p.image_url
-        FROM order_items oi
-        LEFT JOIN products p ON p.id = oi.product_id
-        WHERE oi.order_id = ?
-      `, [order.id]);
-      order.items = itemsResult.rows;
-    }
+  const orders = ordersResult.rows;
+  if (orders.length > 0) {
+    const orderIds = orders.map(o => o.id);
+    const placeholders = orderIds.map(() => '?').join(',');
+    const itemsResult = await query(`
+      SELECT
+        oi.*,
+        p.name,
+        p.image_url
+      FROM order_items oi
+      LEFT JOIN products p ON p.id = oi.product_id
+      WHERE oi.order_id IN (${placeholders})
+      ORDER BY oi.order_id
+    `, orderIds);
+    
+    const itemsByOrderId = {};
+    itemsResult.rows.forEach(item => {
+      if (!itemsByOrderId[item.order_id]) {
+        itemsByOrderId[item.order_id] = [];
+      }
+      itemsByOrderId[item.order_id].push(item);
+    });
+    
+    orders.forEach(order => {
+      order.items = itemsByOrderId[order.id] || [];
+    });
+  } else {
+    orders.forEach(order => {
+      order.items = [];
+    });
+  }
 
     return success(res, {
       orders,
@@ -259,8 +286,9 @@ const getAssignedOrders = async (req, res) => {
 };
 
 const updateDeliveryStatus = async (req, res) => {
-  const conn = await getClient();
+  let conn;
   try {
+    conn = await getClient();
     if (req.user.role !== 'rider') {
       throw { status: 403, message: 'Only riders can update delivery status' };
     }
@@ -341,12 +369,18 @@ const updateDeliveryStatus = async (req, res) => {
       delivery: updatedRows[0] || {},
     }, 'Delivery updated successfully');
   } catch (err) {
-    await conn.query('ROLLBACK');
+    if (conn) {
+      try {
+        await conn.query('ROLLBACK');
+      } catch (rollbackErr) {
+        console.error('updateDeliveryStatus rollback failed:', rollbackErr);
+      }
+    }
     console.error('updateDeliveryStatus error:', err);
     if (err.status) return res.status(err.status).json({ success: false, message: err.message });
     return res.status(500).json({ success: false, message: 'Failed to update delivery' });
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 };
 
@@ -413,22 +447,37 @@ const getMyOrders = async (req, res) => {
 
     ]);
 
-    // ADD ORDER ITEMS
+    // ADD ORDER ITEMS (batch load all items at once, not in a loop)
     const orders = ordersResult.rows;
-
-    for (const order of orders) {
+    if (orders.length > 0) {
+      const orderIds = orders.map(o => o.id);
+      const placeholders = orderIds.map(() => '?').join(',');
       const itemsResult = await query(`
         SELECT
           oi.*,
           p.name,
           p.image_url
         FROM order_items oi
-        LEFT JOIN products p
-          ON p.id = oi.product_id
-        WHERE oi.order_id = ?
-      `, [order.id]);
-
-      order.items = itemsResult.rows;
+        LEFT JOIN products p ON p.id = oi.product_id
+        WHERE oi.order_id IN (${placeholders})
+        ORDER BY oi.order_id
+      `, orderIds);
+      
+      const itemsByOrderId = {};
+      itemsResult.rows.forEach(item => {
+        if (!itemsByOrderId[item.order_id]) {
+          itemsByOrderId[item.order_id] = [];
+        }
+        itemsByOrderId[item.order_id].push(item);
+      });
+      
+      orders.forEach(order => {
+        order.items = itemsByOrderId[order.id] || [];
+      });
+    } else {
+      orders.forEach(order => {
+        order.items = [];
+      });
     }
 
     return success(res, {
@@ -551,8 +600,9 @@ const getOrder = async (req, res) => {
 
 // ─── Cancel Order ─────────────────────────────────────────────────────────────
 const cancelOrder = async (req, res) => {
-  const conn = await getClient();
+  let conn;
   try {
+    conn = await getClient();
     const { id } = req.params;
     await conn.query('START TRANSACTION');
 
@@ -573,11 +623,17 @@ const cancelOrder = async (req, res) => {
     await conn.query('COMMIT');
     return success(res, {}, 'Order cancelled successfully');
   } catch (err) {
-    await conn.query('ROLLBACK');
+    if (conn) {
+      try {
+        await conn.query('ROLLBACK');
+      } catch (rollbackErr) {
+        console.error('cancelOrder rollback failed:', rollbackErr);
+      }
+    }
     if (err.status) return res.status(err.status).json({ success: false, message: err.message });
     return res.status(500).json({ success: false, message: 'Failed to cancel order' });
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 };
 

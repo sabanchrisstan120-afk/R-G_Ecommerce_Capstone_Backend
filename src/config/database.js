@@ -8,10 +8,11 @@ const pool = mysql.createPool({
   user:               process.env.DB_USER     || 'root',
   password:           process.env.DB_PASSWORD || '',
   waitForConnections: true,
-  connectionLimit:    20,
-  queueLimit:         0,
+  connectionLimit:    50,
+  queueLimit:         100,
   timezone:           '+00:00',
   decimalNumbers:     true,
+  namedPlaceholders:  true,
 });
 
 (async () => {
@@ -26,24 +27,41 @@ const pool = mysql.createPool({
 })();
 
 const query = async (text, params = []) => {
-  const start = Date.now();
-  const sql = text.replace(/\$\d+/g, '?');
-  const [rows] = await pool.execute(sql, params);
-  if (process.env.NODE_ENV === 'development') {
-    console.log('📦 Query', { sql: sql.substring(0, 80), ms: Date.now() - start });
+  let conn;
+  try {
+    const start = Date.now();
+    const sql = text.replace(/\$\d+/g, '?');
+    const [rows] = await pool.execute(sql, params);
+    if (process.env.NODE_ENV === 'development') {
+      console.log('📦 Query', { sql: sql.substring(0, 80), ms: Date.now() - start });
+    }
+    return { rows: Array.isArray(rows) ? rows : [rows], rowCount: rows.affectedRows ?? rows.length };
+  } catch (err) {
+    console.error('Query error:', err.message, { params });
+    throw err;
   }
-  return { rows: Array.isArray(rows) ? rows : [rows], rowCount: rows.affectedRows ?? rows.length };
 };
 
 const getClient = async () => {
-  const conn = await pool.getConnection();
-  const originalQuery = conn.query.bind(conn);
-  conn.query = async (text, params = []) => {
-    const sql = text.replace(/\$\d+/g, '?');
-    const [rows] = await originalQuery(sql, params);
-    return { rows: Array.isArray(rows) ? rows : [rows], rowCount: rows.affectedRows ?? rows.length };
-  };
-  return conn;
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const originalQuery = conn.query.bind(conn);
+    conn.query = async (text, params = []) => {
+      try {
+        const sql = text.replace(/\$\d+/g, '?');
+        const [rows] = await originalQuery(sql, params);
+        return { rows: Array.isArray(rows) ? rows : [rows], rowCount: rows.affectedRows ?? rows.length };
+      } catch (err) {
+        console.error('Client query error:', err.message);
+        throw err;
+      }
+    };
+    return conn;
+  } catch (err) {
+    console.error('Failed to acquire connection:', err.message);
+    throw err;
+  }
 };
 
 module.exports = { query, getClient, pool };

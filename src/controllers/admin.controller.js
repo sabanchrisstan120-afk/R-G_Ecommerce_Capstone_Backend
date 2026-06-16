@@ -290,10 +290,8 @@ const getRepeatCustomers = async (req, res) => {
     `, [parseInt(limit), offset]);
 
     const countResult = await query(`
-      SELECT COUNT(*) AS total FROM (
-        SELECT user_id FROM orders WHERE payment_status = 'paid'
-        GROUP BY user_id HAVING COUNT(*) > 1
-      ) sub
+      SELECT COUNT(DISTINCT user_id) AS total FROM orders WHERE payment_status = 'paid'
+      AND user_id IN (SELECT user_id FROM orders WHERE payment_status = 'paid' GROUP BY user_id HAVING COUNT(*) > 1)
     `);
 
     return success(res, {
@@ -361,8 +359,11 @@ LIMIT ? OFFSET ?
 
 const getRiderActivity = async (req, res) => {
   try {
-    const { rider_id, order_id, page = 1, limit = 50 } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const { rider_id, order_id } = req.query;
+    const page = Number.parseInt(req.query.page, 10) || 1;
+    const limit = Number.parseInt(req.query.limit, 10) || 50;
+    const offset = Math.max(0, (page - 1) * limit);
+
     const conditions = ['ca.event_type = ?'];
     const params = ['rider_delivery_update'];
 
@@ -377,6 +378,7 @@ const getRiderActivity = async (req, res) => {
     }
 
     const where = conditions.join(' AND ');
+
     const [activityResult, countResult] = await Promise.all([
       query(`
         SELECT ca.id, ca.user_id, ca.event_type, ca.metadata, ca.ip_address, ca.created_at,
@@ -386,13 +388,15 @@ const getRiderActivity = async (req, res) => {
         WHERE ${where}
         ORDER BY ca.created_at DESC
         LIMIT ? OFFSET ?
-      `, [...params, parseInt(limit), offset]),
+      `, [...params, limit, offset]),
       query(`SELECT COUNT(*) AS total FROM customer_activity ca WHERE ${where}`, params),
     ]);
 
+    const total = Number.parseInt(countResult.rows[0] && countResult.rows[0].total ? countResult.rows[0].total : 0, 10);
+
     return success(res, {
       activity: activityResult.rows,
-      pagination: { page: parseInt(page), limit: parseInt(limit), total: parseInt(countResult.rows[0].total) },
+      pagination: { page, limit, total },
     });
   } catch (err) {
     console.error('getRiderActivity error:', err);
