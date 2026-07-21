@@ -84,14 +84,8 @@ const createRider = async (req, res) => {
 
     await query(
       `INSERT INTO users (id, email, password_hash, first_name, last_name, phone, role)
-       VALUES (?, ?, ?, ?, ?, ?, 'rider')`,
+       VALUES (?, ?, ?, ?, ?, ?, 'customer')`,
       [id, email.toLowerCase(), password_hash, first_name, last_name, phone || null]
-    );
-
-    await query(
-      `INSERT INTO riders (id, first_name, last_name, email, phone)
-       VALUES (?, ?, ?, ?, ?)`,
-      [id, first_name, last_name, email.toLowerCase(), phone || null]
     );
 
     const { rows } = await query('SELECT id, email, first_name, last_name, role, is_active, created_at FROM users WHERE id = ?', [id]);
@@ -328,12 +322,10 @@ const getOrders = async (req, res) => {
        o.ordered_at, o.notes, od.expected_delivery_date, od.rider_id, od.delivery_status,
        od.delivery_issue_type, od.delivery_note, od.delivery_proof_url,
        u.first_name, u.last_name, u.email, u.phone,
-       r.first_name AS rider_first_name, r.last_name AS rider_last_name,
        a.street, a.city, a.province, a.zip_code
 FROM orders o
 JOIN users u ON u.id = o.user_id
 LEFT JOIN order_deliveries od ON od.order_id = o.id
-LEFT JOIN riders r ON r.id = od.rider_id
 LEFT JOIN addresses a ON a.id = o.address_id
 WHERE ${where}
 ORDER BY o.ordered_at DESC
@@ -450,11 +442,9 @@ const updateOrderStatus = async (req, res) => {
 
     const { rows } = await query(
       `SELECT o.*, od.expected_delivery_date, od.delivery_status, od.delivery_issue_type,
-              od.delivery_note, od.delivery_proof_url, od.rider_id,
-              r.first_name AS rider_first_name, r.last_name AS rider_last_name
+              od.delivery_note, od.delivery_proof_url, od.rider_id
        FROM orders o
        LEFT JOIN order_deliveries od ON od.order_id = o.id
-       LEFT JOIN riders r ON r.id = od.rider_id
        WHERE o.id = ?`,
       [id]
     );
@@ -474,9 +464,12 @@ const getUsers = async (req, res) => {
     const conditions = ['1=1'];
     const params = [];
 
-    if (role) { conditions.push('role = ?'); params.push(role); }
+    if (role) {
+      conditions.push('u.role = ?');
+      params.push(role);
+    }
     if (search) {
-      conditions.push('(email LIKE ? OR first_name LIKE ? OR last_name LIKE ?)');
+      conditions.push('(u.email LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ?)');
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
@@ -484,12 +477,14 @@ const getUsers = async (req, res) => {
 
     const [usersResult, countResult] = await Promise.all([
       query(`
-        SELECT id, email, first_name, last_name, phone, role, is_active, last_login_at, created_at
-        FROM users WHERE ${where}
-        ORDER BY created_at DESC
+        SELECT u.id, u.email, u.first_name, u.last_name, u.phone, u.role,
+               u.is_active, u.last_login_at, u.created_at
+        FROM users u
+        WHERE ${where}
+        ORDER BY u.created_at DESC
         LIMIT ? OFFSET ?
       `, [...params, parseInt(limit), offset]),
-      query(`SELECT COUNT(*) AS total FROM users WHERE ${where}`, params),
+      query(`SELECT COUNT(*) AS total FROM users u WHERE ${where}`, params),
     ]);
 
     return success(res, {

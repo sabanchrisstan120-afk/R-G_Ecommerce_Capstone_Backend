@@ -3,6 +3,27 @@ const fs   = require('fs');
 const path = require('path');
 const mysql = require('mysql2/promise');
 
+function splitSqlStatements(sql) {
+  return sql
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split(';')
+    .map(statement => statement.trim())
+    .filter(Boolean)
+    .filter(statement => !/^(?:SET|START TRANSACTION|COMMIT|USE|CREATE DATABASE|DROP DATABASE)/i.test(statement));
+}
+
+function isIgnorableDuplicateError(err) {
+  return /already exists|duplicate entry|1062|1050|1146|foreign key constraint fails|Cannot add or update a child row|Multiple primary key defined/i.test(err.message || '');
+}
+
+async function tableExists(conn, dbName, tableName) {
+  const [rows] = await conn.query(
+    'SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = ? AND table_name = ?',
+    [dbName, tableName]
+  );
+  return rows.length > 0;
+}
+
 async function runMigrations() {
   // Connect without a database first so we can create it if needed
   const conn = await mysql.createConnection({
@@ -45,7 +66,54 @@ async function runMigrations() {
       }
       console.log(`🔄 Running: ${file}`);
       const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
-      await conn.query(sql);
+      const createTables = [...sql.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([a-zA-Z0-9_]+)`?/gi)].map(match => match[1]);
+      const existingTables = [];
+
+      for (const tableName of createTables) {
+        if (await tableExists(conn, dbName, tableName)) {
+          existingTables.push(tableName);
+        }
+      }
+
+      if (existingTables.length > 0) {
+        console.log(`⏭  Existing schema detected for ${file}; skipping replay (${existingTables.join(', ')})`);
+        await conn.query('INSERT INTO _migrations (filename) VALUES (?)', [file]);
+        console.log(`✅ Done: ${file}`);
+        continue;
+      }
+
+      const statements = splitSqlStatements(sql);
+
+      for (const statement of statements) {
+        const createMatch = statement.match(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([a-zA-Z0-9_]+)`?/i);
+        if (createMatch) {
+          const tableName = createMatch[1];
+          if (await tableExists(conn, dbName, tableName)) {
+            console.log(`⏭  Existing table: ${tableName}`);
+            continue;
+          }
+        }
+
+        const insertMatch = statement.match(/^INSERT\s+INTO\s+`?([a-zA-Z0-9_]+)`?/i);
+        if (insertMatch) {
+          const tableName = insertMatch[1];
+          if (await tableExists(conn, dbName, tableName)) {
+            console.log(`⏭  Existing data: ${tableName}`);
+            continue;
+          }
+        }
+
+        try {
+          await conn.query(statement);
+        } catch (err) {
+          if (isIgnorableDuplicateError(err)) {
+            console.log(`⏭  Ignored duplicate/exists error: ${err.message}`);
+            continue;
+          }
+          throw err;
+        }
+      }
+
       await conn.query('INSERT INTO _migrations (filename) VALUES (?)', [file]);
       console.log(`✅ Done: ${file}`);
     }

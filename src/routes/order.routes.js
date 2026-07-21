@@ -37,7 +37,7 @@ router.delete('/addresses/:id', [
 
 // IMPORTANT: /admin must be before /:id
 router.get('/admin', adminOnly, [
-  query('status').optional().isIn(['pending','confirmed','processing','shipped','delivered','cancelled','refunded']),
+  query('status').optional().isIn(['pending','pending_review','confirmed','approved','processing','shipped','delivered','cancelled','refunded','rejected']),
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 50 }),
   validate,
@@ -61,14 +61,14 @@ router.post('/', [
 ], placeOrder);
 
 router.get('/assigned', [
-  query('status').optional().isIn(['pending','confirmed','processing','shipped','delivered','cancelled','refunded']),
+  query('status').optional().isIn(['pending','pending_review','confirmed','approved','processing','shipped','delivered','cancelled','refunded','rejected']),
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 50 }),
   validate,
 ], getAssignedOrders);
 
 router.get('/', [
-  query('status').optional().isIn(['pending','confirmed','processing','shipped','delivered','cancelled','refunded']),
+  query('status').optional().isIn(['pending','pending_review','confirmed','approved','processing','shipped','delivered','cancelled','refunded','rejected']),
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 50 }),
   validate,
@@ -76,7 +76,7 @@ router.get('/', [
 
 // Compatibility alias for older clients
 router.get('/my-orders', [
-  query('status').optional().isIn(['pending','confirmed','processing','shipped','delivered','cancelled','refunded']),
+  query('status').optional().isIn(['pending','pending_review','confirmed','approved','processing','shipped','delivered','cancelled','refunded','rejected']),
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 50 }),
   validate,

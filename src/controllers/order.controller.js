@@ -12,6 +12,38 @@ const generateOrderNumber = () => {
   return `RG-${date}-${rand}`;
 };
 
+const normalizeOrderStatusForStorage = (status, paymentStatus = null) => {
+  const normalized = (status || '').toString().trim().toLowerCase();
+  if (['pending_review', 'pending'].includes(normalized)) return 'pending';
+  if (['approved', 'confirmed'].includes(normalized)) return 'confirmed';
+  if (normalized === 'rejected') return 'cancelled';
+  if (normalized === 'out_for_delivery') return 'processing';
+  if (['cancelled', 'refunded', 'processing', 'shipped', 'delivered'].includes(normalized)) return normalized;
+  if (paymentStatus && paymentStatus.toString().trim().toLowerCase() === 'paid') return 'confirmed';
+  return 'pending';
+};
+
+const normalizeOrderStatusForResponse = (status, paymentStatus = null) => {
+  const normalized = (status || '').toString().trim().toLowerCase();
+  if (normalized === 'pending' && paymentStatus && paymentStatus.toString().trim().toLowerCase() === 'pending') return 'pending_review';
+  if (normalized === 'confirmed') return 'approved';
+  if (normalized === 'cancelled') return 'cancelled';
+  if (normalized === 'refunded') return 'refunded';
+  if (normalized === 'shipped') return 'shipped';
+  if (normalized === 'processing') return 'processing';
+  if (normalized === 'delivered') return 'delivered';
+  return normalized || 'pending_review';
+};
+
+const normalizeOrderRow = (order) => {
+  if (!order) return order;
+  const paymentStatus = order.payment_status || null;
+  return {
+    ...order,
+    status: normalizeOrderStatusForResponse(order.status, paymentStatus),
+  };
+};
+
 const createOrderAddress = async (conn, userId, address, phone) => {
   const street = address.street?.trim();
   const city = address.city?.trim();
@@ -38,7 +70,7 @@ const placeOrder = async (req, res) => {
   let conn;
   try {
     conn = await getClient();
-    const { items, address_id, address, payment_method, notes, phone } = req.body;
+    const { items, address_id, address, payment_method, notes, phone, status, payment_status } = req.body;
     if (!items || !items.length) return badRequest(res, 'Order must contain at least one item');
 
     await conn.query('START TRANSACTION');
@@ -95,11 +127,13 @@ const placeOrder = async (req, res) => {
     const total_amount    = subtotal + shipping_fee - discount_amount;
     const order_number    = generateOrderNumber();
     const order_id        = require('crypto').randomUUID();
+    const persistedStatus = normalizeOrderStatusForStorage(status, payment_status);
+    const persistedPaymentStatus = (payment_status || 'pending').toString().trim().toLowerCase();
 
     await conn.query(
-      `INSERT INTO orders (id, order_number, user_id, address_id, payment_method, subtotal, discount_amount, shipping_fee, total_amount, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [order_id, order_number, req.user.id, orderAddressId, payment_method || null,
+      `INSERT INTO orders (id, order_number, user_id, address_id, status, payment_status, payment_method, subtotal, discount_amount, shipping_fee, total_amount, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [order_id, order_number, req.user.id, orderAddressId, persistedStatus, persistedPaymentStatus, payment_method || null,
        subtotal, discount_amount, shipping_fee, total_amount, notes || null]
     );
 
@@ -128,7 +162,7 @@ const placeOrder = async (req, res) => {
     );
 
     await conn.query('COMMIT');
-    return created(res, { order: { id: order_id, order_number, total_amount, items: orderLines } }, 'Order placed successfully');
+    return created(res, { order: { id: order_id, order_number, total_amount, items: orderLines, status: normalizeOrderStatusForResponse(persistedStatus, persistedPaymentStatus) } }, 'Order placed successfully');
   } catch (err) {
     if (conn) {
       try {
@@ -271,6 +305,8 @@ const getAssignedOrders = async (req, res) => {
     });
   }
 
+  orders = orders.map(normalizeOrderRow);
+
     return success(res, {
       orders,
       pagination: {
@@ -294,7 +330,19 @@ const updateDeliveryStatus = async (req, res) => {
     }
 
     const { id } = req.params;
+
+    // TEMP DEBUG: helps confirm what rider/proof requests are actually sending
+    console.log('[updateDeliveryStatus] req.params.id =', id);
+    console.log('[updateDeliveryStatus] req.body =', req.body);
+
+    if (!id) {
+      // prevents confusing frontend errors; usually means the client is not calling /api/orders/:id/delivery
+      return badRequest(res, 'Missing order_id (order id must be in URL param :id)');
+    }
+
     const { delivery_status, delivery_note, delivery_proof_base64 } = req.body;
+
+
 
     if (['failed', 'cancelled'].includes(delivery_status) && !delivery_note) {
       return badRequest(res, 'A reason is required when delivery fails or is cancelled');
@@ -423,15 +471,14 @@ const getMyOrders = async (req, res) => {
           od.delivery_note,
           od.delivery_proof_url,
           od.rider_id,
-          r.first_name AS rider_first_name,
-          r.last_name AS rider_last_name,
+          NULL AS rider_first_name,
+          NULL AS rider_last_name,
           COALESCE(oa.street, ua.street) AS street,
           COALESCE(oa.city, ua.city) AS city,
           COALESCE(oa.province, ua.province) AS province,
           COALESCE(oa.zip_code, ua.zip_code) AS zip_code
         FROM orders o
         LEFT JOIN order_deliveries od ON od.order_id = o.id
-        LEFT JOIN riders r ON r.id = od.rider_id
         LEFT JOIN addresses oa ON oa.id = o.address_id
         LEFT JOIN addresses ua ON ua.user_id = o.user_id AND ua.is_default = 1
         WHERE ${where}
@@ -448,7 +495,7 @@ const getMyOrders = async (req, res) => {
     ]);
 
     // ADD ORDER ITEMS (batch load all items at once, not in a loop)
-    const orders = ordersResult.rows;
+    let orders = ordersResult.rows;
     if (orders.length > 0) {
       const orderIds = orders.map(o => o.id);
       const placeholders = orderIds.map(() => '?').join(',');
@@ -524,14 +571,13 @@ const getAllOrders = async (req, res) => {
                od.delivery_note,
                od.delivery_proof_url,
                od.rider_id,
-               r.first_name AS rider_first_name,
-               r.last_name AS rider_last_name,
+               NULL AS rider_first_name,
+               NULL AS rider_last_name,
                CONCAT(u.first_name, ' ', u.last_name) AS customer_name,
                u.email
         FROM orders o
         JOIN users u ON u.id = o.user_id
         LEFT JOIN order_deliveries od ON od.order_id = o.id
-        LEFT JOIN riders r ON r.id = od.rider_id
         ${where}
         ORDER BY o.ordered_at DESC
         LIMIT ? OFFSET ?
@@ -544,8 +590,10 @@ const getAllOrders = async (req, res) => {
       `, params),
     ]);
 
+    const orders = ordersResult.rows.map(normalizeOrderRow);
+
     return success(res, {
-      orders: ordersResult.rows,
+      orders,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -575,13 +623,12 @@ const getOrder = async (req, res) => {
              od.delivery_note,
              od.delivery_proof_url,
              od.rider_id,
-             r.first_name AS rider_first_name,
-             r.last_name AS rider_last_name
+             NULL AS rider_first_name,
+             NULL AS rider_last_name
       FROM orders o
       LEFT JOIN addresses oa ON oa.id = o.address_id
       LEFT JOIN addresses ua ON ua.user_id = o.user_id AND ua.is_default = 1
       LEFT JOIN order_deliveries od ON od.order_id = o.id
-      LEFT JOIN riders r ON r.id = od.rider_id
       WHERE o.id = ?
     `, [id]);
 
@@ -592,7 +639,7 @@ const getOrder = async (req, res) => {
       return forbidden(res, 'Access denied');
 
     const { rows: items } = await query('SELECT * FROM order_items WHERE order_id = ?', [id]);
-    return success(res, { order: { ...order, items } });
+    return success(res, { order: { ...normalizeOrderRow(order), items } });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to load order' });
   }
@@ -660,7 +707,8 @@ const recordPayment = async (req, res) => {
     `, [payment_method, id]);
 
     const { rows } = await query('SELECT id, order_number, status, payment_status, payment_method, total_amount FROM orders WHERE id = ?', [id]);
-    return success(res, { order: rows[0] }, 'Payment recorded');
+    const orderResponse = rows[0] ? normalizeOrderRow(rows[0]) : rows[0];
+    return success(res, { order: orderResponse }, 'Payment recorded');
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to record payment' });
   }

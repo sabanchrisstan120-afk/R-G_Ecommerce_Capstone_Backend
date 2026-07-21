@@ -23,7 +23,7 @@ const productRoutes = require('./routes/product.routes');
 const orderRoutes   = require('./routes/order.routes');
 
 const app  = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT || 3000);
 
 // ─── Security Middleware ──────────────────────────────────────────────────────
 app.use(helmet());
@@ -99,9 +99,9 @@ app.get('/health', (req, res) => {
 app.use('/api/auth',     authLimiter, authRoutes);
 app.use('/api/admin',    adminRoutes);
 app.use('/api/products', productRoutes);
-const reviewRoutes = require('./routes/review.routes');
 app.use('/api/orders',   orderRoutes);
-app.use('/api/reviews', reviewRoutes);
+app.use('/api/reviews',  require('./routes/review.routes'));
+
 
 // ─── 404 Handler ─────────────────────────────────────────────────────────────
 app.use((req, res) => {
@@ -119,13 +119,28 @@ app.use((err, req, res, next) => {
 });
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`\n🚀 R&G Trading API running on http://localhost:${PORT}`);
-  console.log(`📋 Environment: ${process.env.NODE_ENV}`);
-  console.log(`🔑 Auth:      /api/auth`);
-  console.log(`📦 Products:  /api/products`);
-  console.log(`🛒 Orders:    /api/orders`);
-  console.log(`🛠  Admin:     /api/admin\n`);
-});
+function startServer(port) {
+  const server = app.listen(port, () => {
+    console.log(`\n🚀 R&G Trading API running on http://localhost:${port}`);
+    console.log(`📋 Environment: ${process.env.NODE_ENV}`);
+    console.log(`🔑 Auth:      /api/auth`);
+    console.log(`📦 Products:  /api/products`);
+    console.log(`🛒 Orders:    /api/orders`);
+    console.log(`🛠  Admin:     /api/admin\n`);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      const fallbackPort = port + 1;
+      console.warn(`⚠️ Port ${port} is busy. Retrying on ${fallbackPort}...`);
+      server.close(() => startServer(fallbackPort));
+    } else {
+      console.error('Server startup error:', err);
+      process.exit(1);
+    }
+  });
+}
+
+startServer(PORT);
 
 module.exports = app;

@@ -25,7 +25,12 @@ const register = async (req, res) => {
       [id, email.toLowerCase(), password_hash, first_name, last_name, phone || null]
     );
 
-    const { rows } = await query('SELECT id, email, first_name, last_name, role, created_at FROM users WHERE id = ?', [id]);
+    const { rows } = await query(
+      `SELECT u.id, u.email, u.first_name, u.last_name, u.role, u.created_at
+       FROM users u
+       WHERE u.id = ?`,
+      [id]
+    );
     const user = rows[0];
 
     const tokenPayload = { userId: user.id, role: user.role };
@@ -53,7 +58,9 @@ const login = async (req, res) => {
   try {
     const { email, password } = req.body;
     const { rows } = await query(
-      'SELECT id, email, password_hash, first_name, last_name, role, is_active FROM users WHERE email = ?',
+      `SELECT u.id, u.email, u.password_hash, u.first_name, u.last_name, u.role, u.is_active
+       FROM users u
+       WHERE u.email = ?`,
       [email.toLowerCase()]
     );
 
@@ -136,7 +143,10 @@ const logout = async (req, res) => {
 const getProfile = async (req, res) => {
   try {
     const { rows: userRows } = await query(
-      'SELECT id, email, first_name, last_name, phone, role, email_verified, last_login_at, created_at FROM users WHERE id = ?',
+      `SELECT u.id, u.email, u.first_name, u.last_name, u.phone, u.role,
+              u.email_verified, u.last_login_at, u.created_at
+       FROM users u
+       WHERE u.id = ?`,
       [req.user.id]
     );
 

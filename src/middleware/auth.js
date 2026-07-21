@@ -17,7 +17,9 @@ const authenticate = async (req, res, next) => {
 
     // Verify user still exists and is active
     const { rows } = await query(
-      'SELECT id, email, first_name, last_name, role, is_active FROM users WHERE id = ?',
+      `SELECT u.id, u.email, u.first_name, u.last_name, u.role, u.is_active
+       FROM users u
+       WHERE u.id = ?`,
       [decoded.userId]
     );
 
